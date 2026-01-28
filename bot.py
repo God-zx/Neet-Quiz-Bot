@@ -8,7 +8,7 @@ from telegram.ext import (
     filters
 )
 
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("8306933416:AAERtXgXDe1JkRmWEryb87LW3fZQpv2io-0")
 
 QUIZ_STORE = {}   # quiz_id : answer_key
 
