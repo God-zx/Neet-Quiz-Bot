@@ -8,57 +8,64 @@ from telegram.ext import (
     filters
 )
 
-TOKEN = os.getenv("8306933416:AAERtXgXDe1JkRmWEryb87LW3fZQpv2io-0")
+# 🔐 TOKEN (Render ENV se)
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN not set")
 
-QUIZ_STORE = {}   # quiz_id : answer_key
+# quiz data store
+QUIZ_DATA = {
+    "chat_id": None,
+    "message_id": None,
+    "answer_key": None
+}
 
 # 1️⃣ Admin quiz forward kare
 async def save_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message.poll:
-        poll = update.message.poll
-        quiz_id = poll.id
-        answers = [str(i+1) for i, opt in enumerate(poll.options) if opt.voter_count >= 0]
-
-        # NOTE: Correct option Telegram already knows, admin manually set karega key
-        QUIZ_STORE[quiz_id] = None
+        QUIZ_DATA["chat_id"] = update.message.chat_id
+        QUIZ_DATA["message_id"] = update.message.message_id
+        QUIZ_DATA["answer_key"] = None
 
         await update.message.reply_text(
             "✅ Quiz saved!\n"
-            "Ab /setkey 2,1,3,4 jaise answer key set karo"
+            "Ab answer key set karo:\n"
+            "/setkey 2,1,3,4"
         )
 
 # 2️⃣ Answer key set kare
 async def setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("❌ /setkey 2,1,3,4")
+        await update.message.reply_text("❌ Use: /setkey 2,1,3,4")
         return
 
-    key = context.args[0].split(",")
-    last_quiz = list(QUIZ_STORE.keys())[-1]
-    QUIZ_STORE[last_quiz] = key
-
-    await update.message.reply_text("📝 Answer key set ho gayi")
+    QUIZ_DATA["answer_key"] = context.args[0].split(",")
+    await update.message.reply_text("📝 Answer key saved")
 
 # 3️⃣ Group me quiz bheje
 async def neetquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not QUIZ_STORE:
-        await update.message.reply_text("❌ Koi quiz saved nahi hai")
+    if not QUIZ_DATA["message_id"]:
+        await update.message.reply_text("❌ Pehle quiz forward karo")
         return
 
-    quiz_id = list(QUIZ_STORE.keys())[-1]
-    await context.bot.send_poll(
+    await context.bot.copy_message(
         chat_id=update.effective_chat.id,
-        poll=quiz_id
+        from_chat_id=QUIZ_DATA["chat_id"],
+        message_id=QUIZ_DATA["message_id"]
     )
 
-# 4️⃣ Score calculate kare
+# 4️⃣ Score calculate kare (+4 / −1)
 async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not QUIZ_DATA["answer_key"]:
+        await update.message.reply_text("❌ Answer key set nahi hai")
+        return
+
     if not context.args:
-        await update.message.reply_text("❌ /score 2,1,3,4")
+        await update.message.reply_text("❌ Use: /score 2,1,3,4")
         return
 
     user_ans = context.args[0].split(",")
-    key = list(QUIZ_STORE.values())[-1]
+    key = QUIZ_DATA["answer_key"]
 
     correct = wrong = 0
     for u, k in zip(user_ans, key):
@@ -76,9 +83,11 @@ async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎯 Marks: {marks}"
     )
 
+# 🚀 App
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(MessageHandler(filters.POLL, save_quiz))
 app.add_handler(CommandHandler("setkey", setkey))
 app.add_handler(CommandHandler("neetquiz", neetquiz))
 app.add_handler(CommandHandler("score", score))
+
 app.run_polling()
