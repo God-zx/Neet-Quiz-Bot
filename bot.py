@@ -1,93 +1,121 @@
 import os
-from telegram import Update
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
+    CallbackQueryHandler,
     MessageHandler,
     ContextTypes,
-    filters
+    filters,
 )
 
-# 🔐 TOKEN (Render ENV se)
+# 🔐 Token from Render ENV
 TOKEN = os.getenv("BOT_TOKEN")
 if not TOKEN:
     raise RuntimeError("BOT_TOKEN not set")
 
-# quiz data store
-QUIZ_DATA = {
-    "chat_id": None,
-    "message_id": None,
-    "answer_key": None
-}
+# Temporary in-memory storage
+USERS = {}
+QUIZZES = {}
 
-# 1️⃣ Admin quiz forward kare
-async def save_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.poll:
-        QUIZ_DATA["chat_id"] = update.message.chat_id
-        QUIZ_DATA["message_id"] = update.message.message_id
-        QUIZ_DATA["answer_key"] = None
+# /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("➕ Create NEET Quiz", callback_data="create")],
+        [InlineKeyboardButton("📚 My Quizzes", callback_data="myquizzes")],
+    ]
+    await update.message.reply_text(
+        "🧠 *NEET Quiz Bot*\n\n"
+        "Create NEET-style quizzes (+4 / −1)\n"
+        "Just like @quizbot 👇",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown",
+    )
 
+# Button handler
+async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    uid = query.from_user.id
+
+    if query.data == "create":
+        USERS[uid] = {"step": "question", "data": {}}
+        await query.message.reply_text("📝 Send *Question*", parse_mode="Markdown")
+
+    elif query.data == "myquizzes":
+        if uid not in QUIZZES:
+            await query.message.reply_text("❌ No quizzes yet")
+        else:
+            await query.message.reply_text("📚 Your quiz is ready. Use /share")
+
+# Message handler (quiz creation flow)
+async def collect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.message.from_user.id
+    if uid not in USERS:
+        return
+
+    step = USERS[uid]["step"]
+
+    if step == "question":
+        USERS[uid]["data"]["question"] = update.message.text
+        USERS[uid]["step"] = "options"
+        USERS[uid]["data"]["options"] = []
+        await update.message.reply_text("Send option 1")
+
+    elif step == "options":
+        USERS[uid]["data"]["options"].append(update.message.text)
+        count = len(USERS[uid]["data"]["options"])
+
+        if count < 4:
+            await update.message.reply_text(f"Send option {count+1}")
+        else:
+            USERS[uid]["step"] = "answer"
+            await update.message.reply_text("✅ Send correct option number (1-4)")
+
+    elif step == "answer":
+        correct = int(update.message.text) - 1
+        quiz = USERS[uid]["data"]
+
+        QUIZZES[uid] = {
+            "question": quiz["question"],
+            "options": quiz["options"],
+            "correct": correct,
+        }
+
+        del USERS[uid]
         await update.message.reply_text(
-            "✅ Quiz saved!\n"
-            "Ab answer key set karo:\n"
-            "/setkey 2,1,3,4"
+            "🎉 Quiz created!\n\nUse /share to send in group"
         )
 
-# 2️⃣ Answer key set kare
-async def setkey(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Use: /setkey 2,1,3,4")
+# Share quiz
+async def share(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.message.from_user.id
+    if uid not in QUIZZES:
+        await update.message.reply_text("❌ No quiz found")
         return
 
-    QUIZ_DATA["answer_key"] = context.args[0].split(",")
-    await update.message.reply_text("📝 Answer key saved")
+    q = QUIZZES[uid]
 
-# 3️⃣ Group me quiz bheje
-async def neetquiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not QUIZ_DATA["message_id"]:
-        await update.message.reply_text("❌ Pehle quiz forward karo")
-        return
-
-    await context.bot.copy_message(
+    await context.bot.send_poll(
         chat_id=update.effective_chat.id,
-        from_chat_id=QUIZ_DATA["chat_id"],
-        message_id=QUIZ_DATA["message_id"]
+        question=q["question"],
+        options=q["options"],
+        type="quiz",
+        correct_option_id=q["correct"],
+        is_anonymous=False,
     )
 
-# 4️⃣ Score calculate kare (+4 / −1)
-async def score(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not QUIZ_DATA["answer_key"]:
-        await update.message.reply_text("❌ Answer key set nahi hai")
-        return
-
-    if not context.args:
-        await update.message.reply_text("❌ Use: /score 2,1,3,4")
-        return
-
-    user_ans = context.args[0].split(",")
-    key = QUIZ_DATA["answer_key"]
-
-    correct = wrong = 0
-    for u, k in zip(user_ans, key):
-        if u == k:
-            correct += 1
-        else:
-            wrong += 1
-
-    marks = correct * 4 - wrong
-
-    await update.message.reply_text(
-        f"📊 NEET RESULT\n\n"
-        f"✅ Correct: {correct}\n"
-        f"❌ Wrong: {wrong}\n"
-        f"🎯 Marks: {marks}"
-    )
-
-# 🚀 App
+# App
 app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(MessageHandler(filters.POLL, save_quiz))
-app.add_handler(CommandHandler("setkey", setkey))
-app.add_handler(CommandHandler("neetquiz", neetquiz))
-app.add_handler(CommandHandler("score", score))
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("share", share))
+app.add_handler(CallbackQueryHandler(buttons))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect))
 
 app.run_polling()
